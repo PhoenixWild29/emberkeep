@@ -16,5 +16,12 @@ namespace EmberKeep.AI {
 
         [Tooltip("Diffuse colour applied to the NPC's primitive when the build script spawns it.")]
         public Color tint = new Color(0.7f, 0.45f, 0.2f);
+
+        [Header("Safety")]
+        [TextArea(2, 4)]
+        [Tooltip("In-character line shown when the safety filter blocks a turn (jailbreak attempt, NSFW request, etc.). Should never reveal the filter exists.")]
+        public string refusalLine =
+            "I'll thank you to keep that sort of talk out of my tavern, traveller. " +
+            "Try a different question.";
     }
 }

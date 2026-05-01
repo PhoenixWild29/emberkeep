@@ -200,6 +200,22 @@ namespace EmberKeep.Game {
             return npc != null ? npc.gameObject.name : "unknown";
         }
 
+        static string ResolveRefusal(Npc npc) {
+            if (npc != null && npc.personality != null &&
+                !string.IsNullOrWhiteSpace(npc.personality.refusalLine)) {
+                return npc.personality.refusalLine;
+            }
+            return "I'd rather not talk about that, traveller. Try something else.";
+        }
+
+        void ReenableInput() {
+            if (inputField) {
+                inputField.interactable = true;
+                inputField.ActivateInputField();
+            }
+            if (sendButton) sendButton.interactable = true;
+        }
+
         async void OnSendClicked() {
             if (!_inDialogue || _currentNpc == null) return;
             if (inputField == null || string.IsNullOrWhiteSpace(inputField.text)) return;
@@ -209,6 +225,16 @@ namespace EmberKeep.Game {
             inputField.interactable = false;
             if (sendButton) sendButton.interactable = false;
             if (npcReplyText) npcReplyText.text = "";
+
+            // ---- Safety stage 1: input scan (before LLM call) ----
+            var blockReason = SafetyFilter.IsPromptBlocked(raw);
+            if (blockReason != SafetyFilter.BlockReason.None) {
+                string refusal = ResolveRefusal(_currentNpc);
+                if (npcReplyText) npcReplyText.text = refusal;
+                Debug.Log($"[Safety] blocked input ({blockReason}): {raw}");
+                if (_inDialogue) ReenableInput();
+                return;
+            }
 
             // Decide which generation path this turn uses:
             //   - merchant + numeric input -> BT picks intent, LLM writes line
@@ -250,11 +276,18 @@ namespace EmberKeep.Game {
                     if (npcReplyText) npcReplyText.text += token;
                     assistantText.Append(token);
                 }
-                if (outcomeTag != null && npcReplyText)
+                // ---- Safety stage 2: output scan ----
+                string finalText = assistantText.ToString();
+                if (SafetyFilter.ContainsBlockedContent(finalText)) {
+                    Debug.LogWarning($"[Safety] blocked output for {MemoryIdFor(_currentNpc)}; replacing with refusal line.");
+                    finalText = ResolveRefusal(_currentNpc);
+                    if (npcReplyText) npcReplyText.text = finalText;
+                } else if (outcomeTag != null && npcReplyText) {
                     npcReplyText.text += outcomeTag;
+                }
 
-                if (_inDialogue && assistantText.Length > 0) {
-                    _currentTurns.Add((raw, assistantText.ToString().Trim()));
+                if (_inDialogue && finalText.Length > 0) {
+                    _currentTurns.Add((raw, finalText.Trim()));
                 }
             } catch (OperationCanceledException) {
                 // expected on EndDialogue / new prompt
@@ -262,13 +295,7 @@ namespace EmberKeep.Game {
                 Debug.LogException(e);
             }
 
-            if (_inDialogue) {
-                if (inputField) {
-                    inputField.interactable = true;
-                    inputField.ActivateInputField();
-                }
-                if (sendButton) sendButton.interactable = true;
-            }
+            if (_inDialogue) ReenableInput();
         }
 
         static bool TryParseOffer(string raw, out int gold) {
