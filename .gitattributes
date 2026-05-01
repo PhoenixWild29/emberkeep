@@ -1,0 +1,8 @@
+Models/*.gguf filter=lfs diff=lfs merge=lfs -text
+* text=auto eol=lf
+*.cs text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.dll binary
+*.bundle binary
+*.so binary
