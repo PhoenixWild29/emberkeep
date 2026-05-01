@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 namespace EmberKeep.AI {
+    // Thin P/Invoke wrapper over emberkeep_native.dll. No logic lives here -
+    // higher-level orchestration belongs in LlmService.
     public static class LlamaCppBridge {
         const string DLL = "emberkeep_native";
 
@@ -13,11 +15,17 @@ namespace EmberKeep.AI {
         public static extern int ek_init([MarshalAs(UnmanagedType.LPStr)] string modelPath);
 
         [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void ek_set_system([MarshalAs(UnmanagedType.LPStr)] string text);
+
+        [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern int ek_generate(
-            [MarshalAs(UnmanagedType.LPStr)] string prompt,
+            [MarshalAs(UnmanagedType.LPStr)] string userMessage,
             int maxTokens,
             TokenCallback cb,
             IntPtr userData);
+
+        [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void ek_interrupt();
 
         [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern void ek_shutdown();
@@ -26,6 +34,7 @@ namespace EmberKeep.AI {
             if (ptr == IntPtr.Zero) return string.Empty;
             int len = 0;
             while (Marshal.ReadByte(ptr, len) != 0) len++;
+            if (len == 0) return string.Empty;
             var bytes = new byte[len];
             Marshal.Copy(ptr, bytes, 0, len);
             return Encoding.UTF8.GetString(bytes);
