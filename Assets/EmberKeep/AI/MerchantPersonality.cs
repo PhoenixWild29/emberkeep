@@ -19,5 +19,19 @@ namespace EmberKeep.AI {
         [Header("Starting mood")]
         [Range(-1f, 1f)]
         public float startingMood = 0f;
+
+        [Header("Dialogue scaffolding")]
+        [TextArea(2, 4)]
+        [Tooltip("Fixed line shown when the player first opens dialogue. Useful for orienting the player to the price; the LLM takes over for replies to offers.")]
+        public string greetingTemplate =
+            "{name} looks up from polishing a copper buckle. \"Welcome, traveler. " +
+            "I've got a fine {item} on offer - {asking} gold. Make me a number.\"";
+
+        public string FormatGreeting() {
+            return greetingTemplate
+                .Replace("{name}",   displayName)
+                .Replace("{item}",   itemName)
+                .Replace("{asking}", askingPrice.ToString());
+        }
     }
 }

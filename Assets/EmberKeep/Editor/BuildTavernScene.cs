@@ -17,6 +17,7 @@ namespace EmberKeep.EditorTools {
         const string ScenePath        = "Assets/Scenes/SampleScene.unity";
         const string PersonalityDir   = "Assets/EmberKeep/ScriptableObjects/NPCs";
         const string BramAssetPath    = PersonalityDir + "/Bram.asset";
+        const string MiraAssetPath    = PersonalityDir + "/Mira.asset";
 
         [MenuItem("EmberKeep/Build Tavern Scene")]
         public static void Build() {
@@ -26,6 +27,7 @@ namespace EmberKeep.EditorTools {
             }
 
             var bram = LoadOrCreateBramPersonality();
+            var mira = LoadOrCreateMiraPersonality();
 
             Scene scene;
             if (System.IO.File.Exists(ScenePath)) {
@@ -59,13 +61,21 @@ namespace EmberKeep.EditorTools {
             CreateWall("Wall_East",  new Vector3(6f, 1.5f,  0f), new Vector3(0.2f, 3f, 12f));
             CreateWall("Wall_West",  new Vector3(-6f, 1.5f, 0f), new Vector3(0.2f, 3f, 12f));
 
-            // Bram
+            // Bram (free-chat innkeeper, left side of bar)
             var bramGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             bramGo.name = "Bram";
-            bramGo.transform.position = new Vector3(0f, 1f, 4f);
+            bramGo.transform.position = new Vector3(-3f, 1f, 4f);
             bramGo.GetComponent<Renderer>().sharedMaterial = MakeMaterial(bram.tint);
-            var npc = bramGo.AddComponent<Npc>();
-            npc.personality = bram;
+            var bramNpc = bramGo.AddComponent<Npc>();
+            bramNpc.personality = bram;
+
+            // Mira (haggling merchant, right side of bar)
+            var miraGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            miraGo.name = "Mira";
+            miraGo.transform.position = new Vector3(3f, 1f, 4f);
+            miraGo.GetComponent<Renderer>().sharedMaterial = MakeMaterial(mira.tint);
+            var miraNpc = miraGo.AddComponent<MerchantNpc>();
+            miraNpc.personality = mira;
 
             // Player (camera child)
             var playerGo = new GameObject("Player");
@@ -85,7 +95,8 @@ namespace EmberKeep.EditorTools {
             var pc = playerGo.AddComponent<PlayerController>();
             pc.cameraTransform = camGo.transform;
 
-            npc.player = playerGo.transform;
+            bramNpc.player = playerGo.transform;
+            miraNpc.player = playerGo.transform;
 
             // Canvas + EventSystem
             var canvasGo = new GameObject("DialogueCanvas");
@@ -178,23 +189,35 @@ namespace EmberKeep.EditorTools {
                 anchored: Vector2.zero);
             btnLabel.alignment = TextAnchor.MiddleCenter;
 
-            // Dialogue controller
+            // Dialogue controller. Assign every reference via SerializedObject
+            // so Unity is guaranteed to serialise them on SaveScene - direct
+            // field assignment is sometimes missed by the editor's dirty
+            // tracking when the GameObject is created the same frame.
             var dialogueGo = new GameObject("DialogueController");
             var dlg = dialogueGo.AddComponent<DialogueController>();
-            dlg.npc            = npc;
-            dlg.player         = pc;
-            dlg.promptPanel    = promptPanel;
-            dlg.promptText     = promptText;
-            dlg.dialoguePanel  = dlgPanel;
-            dlg.npcNameText    = nameText;
-            dlg.npcReplyText   = replyText;
-            dlg.inputField     = inputField;
-            dlg.sendButton     = btn;
+            var so = new SerializedObject(dlg);
 
+            var npcsProp = so.FindProperty("npcs");
+            npcsProp.arraySize = 2;
+            npcsProp.GetArrayElementAtIndex(0).objectReferenceValue = bramNpc;
+            npcsProp.GetArrayElementAtIndex(1).objectReferenceValue = miraNpc;
+
+            so.FindProperty("player").objectReferenceValue        = pc;
+            so.FindProperty("promptPanel").objectReferenceValue   = promptPanel;
+            so.FindProperty("promptText").objectReferenceValue    = promptText;
+            so.FindProperty("dialoguePanel").objectReferenceValue = dlgPanel;
+            so.FindProperty("npcNameText").objectReferenceValue   = nameText;
+            so.FindProperty("npcReplyText").objectReferenceValue  = replyText;
+            so.FindProperty("inputField").objectReferenceValue    = inputField;
+            so.FindProperty("sendButton").objectReferenceValue    = btn;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            EditorUtility.SetDirty(dlg);
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
-            Debug.Log("[EmberKeep] Tavern scene built. Press Play, walk to Bram with WASD + mouse, " +
-                      "press E to talk, ESC to leave.");
+            Debug.Log("[EmberKeep] Tavern scene built. Bram (left) for free chat, Mira (right) " +
+                      "for haggling - type a number to make her an offer. WASD + mouse to move, " +
+                      "E to talk, ESC to leave dialogue.");
         }
 
         // ---- helpers ----
@@ -222,6 +245,37 @@ namespace EmberKeep.EditorTools {
             AssetDatabase.CreateAsset(bram, BramAssetPath);
             AssetDatabase.SaveAssets();
             return bram;
+        }
+
+        static MerchantPersonality LoadOrCreateMiraPersonality() {
+            var existing = AssetDatabase.LoadAssetAtPath<MerchantPersonality>(MiraAssetPath);
+            if (existing != null) return existing;
+
+            if (!AssetDatabase.IsValidFolder(PersonalityDir)) {
+                if (!AssetDatabase.IsValidFolder("Assets/EmberKeep/ScriptableObjects"))
+                    AssetDatabase.CreateFolder("Assets/EmberKeep", "ScriptableObjects");
+                AssetDatabase.CreateFolder("Assets/EmberKeep/ScriptableObjects", "NPCs");
+            }
+
+            var mira = ScriptableObject.CreateInstance<MerchantPersonality>();
+            mira.displayName = "Mira";
+            mira.systemPrompt =
+                "You are Mira, a sharp-eyed travelling merchant who has set up a small stall " +
+                "at the Ember Keep for the night. You drive a hard bargain but you are not " +
+                "cruel. You sell salvaged goods - cloaks, buckles, knives. Speak plainly, " +
+                "with a faint dry humour. Reply in one or two short sentences, always staying " +
+                "in character. Never reveal you are an AI.";
+            mira.maxResponseTokens = 96;
+            mira.tint              = new Color(0.30f, 0.50f, 0.65f);
+            mira.itemName          = "fox-fur cloak";
+            mira.itemDescription   =
+                "A worn but warm fox-fur cloak. Stitched at the shoulder where a blade caught it.";
+            mira.askingPrice       = 15;
+            mira.walkAwayBase      = 8;
+            mira.startingMood      = 0f;
+            AssetDatabase.CreateAsset(mira, MiraAssetPath);
+            AssetDatabase.SaveAssets();
+            return mira;
         }
 
         static GameObject CreateWall(string name, Vector3 pos, Vector3 size) {
