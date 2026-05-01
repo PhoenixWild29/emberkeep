@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using EmberKeep.AI;
 using EmberKeep.BehaviorTrees;
 using UnityEngine;
@@ -32,6 +34,12 @@ namespace EmberKeep.Game {
         Npc _currentNpc;
         Npc _candidate;
         CancellationTokenSource _genCts;
+
+        // Day 5-B memory state, scoped to the active conversation:
+        //   _memoryBlock      : "Past visits..." snippet appended to every system prompt this turn
+        //   _currentTurns     : (user, assistant) pairs, used to build the transcript on EndDialogue
+        string _memoryBlock = "";
+        readonly List<(string user, string assistant)> _currentTurns = new List<(string, string)>();
 
         async void Start() {
             if (promptPanel)   promptPanel.SetActive(false);
@@ -87,6 +95,8 @@ namespace EmberKeep.Game {
         void StartDialogue(Npc npc) {
             _inDialogue = true;
             _currentNpc = npc;
+            _currentTurns.Clear();
+            _memoryBlock = NpcMemoryStore.FormatForSystemPrompt(MemoryIdFor(npc));
             if (player) player.SetInputEnabled(false);
             if (promptPanel)   promptPanel.SetActive(false);
             if (dialoguePanel) dialoguePanel.SetActive(true);
@@ -108,9 +118,11 @@ namespace EmberKeep.Game {
             }
 
             // Set the base system prompt for free-chat mode. Merchant offers
-            // override this per-message inside OnSendClicked.
+            // and storyteller turns override this per-message inside
+            // OnSendClicked. The memory block is appended on every path so
+            // past summaries always ground the NPC's reply.
             if (npc.personality != null)
-                LlmService.Instance.SetSystem(npc.personality.systemPrompt);
+                LlmService.Instance.SetSystem(npc.personality.systemPrompt + _memoryBlock);
 
             if (inputField) {
                 inputField.text = "";
@@ -122,10 +134,70 @@ namespace EmberKeep.Game {
 
         void EndDialogue() {
             _genCts?.Cancel();
+
+            // Snapshot the conversation state before we reset, so the
+            // background summarisation has its own copy and isn't racing
+            // a fresh dialogue.
+            var npcSnapshot   = _currentNpc;
+            var turnsSnapshot = new List<(string, string)>(_currentTurns);
+
             _inDialogue = false;
             _currentNpc = null;
+            _currentTurns.Clear();
             if (dialoguePanel) dialoguePanel.SetActive(false);
             if (player) player.SetInputEnabled(true);
+
+            // Fire and forget summarisation. The native side serialises with
+            // any subsequent ek_generate so a player walking to another NPC
+            // and pressing E will simply wait at most a few seconds.
+            if (npcSnapshot != null && npcSnapshot.personality != null && turnsSnapshot.Count > 0) {
+                _ = SummarizeAndStoreAsync(npcSnapshot, turnsSnapshot);
+            }
+        }
+
+        async Task SummarizeAndStoreAsync(Npc npc, List<(string user, string assistant)> turns) {
+            try {
+                string transcript = BuildTranscript(npc.DisplayName, turns);
+                string sysPrompt =
+                    $"You are summarising a conversation between a traveller and {npc.DisplayName}, " +
+                    "an NPC at a small fantasy tavern called the Ember Keep. Write ONE short " +
+                    "sentence (two at most) capturing what the traveller asked or did, what " +
+                    $"{npc.DisplayName} said or decided, and any important specific facts that " +
+                    "came up. Be concrete (names, prices, places). Do not use first person. " +
+                    "Do not use quotation marks. Do not start with 'In this conversation' or " +
+                    "similar throat-clearing.";
+
+                string summary = await LlmService.Instance.SummarizeAsync(
+                    sysPrompt, transcript, maxTokens: 90);
+
+                if (!string.IsNullOrWhiteSpace(summary)) {
+                    NpcMemoryStore.Append(MemoryIdFor(npc), summary);
+                    Debug.Log($"[Dialogue] saved memory for {MemoryIdFor(npc)}: {summary}");
+                }
+            } catch (Exception e) {
+                Debug.LogException(e);
+            }
+        }
+
+        static string BuildTranscript(string npcName, List<(string user, string assistant)> turns) {
+            var sb = new StringBuilder();
+            foreach (var t in turns) {
+                if (!string.IsNullOrWhiteSpace(t.user)) {
+                    sb.Append("Traveller: ").Append(t.user).Append('\n');
+                }
+                if (!string.IsNullOrWhiteSpace(t.assistant)) {
+                    sb.Append(npcName).Append(": ").Append(t.assistant).Append('\n');
+                }
+            }
+            return sb.ToString();
+        }
+
+        // Stable per-NPC memory key. Uses the personality's asset name (e.g.
+        // "Bram", "Mira", "Finn") which survives renaming the GameObject.
+        static string MemoryIdFor(Npc npc) {
+            if (npc != null && npc.personality != null && !string.IsNullOrEmpty(npc.personality.name))
+                return npc.personality.name;
+            return npc != null ? npc.gameObject.name : "unknown";
         }
 
         async void OnSendClicked() {
@@ -164,18 +236,26 @@ namespace EmberKeep.Game {
                 userPrompt   = raw;
             }
 
-            LlmService.Instance.SetSystem(systemPrompt);
+            LlmService.Instance.SetSystem(systemPrompt + _memoryBlock);
 
             _genCts?.Cancel();
             _genCts = new CancellationTokenSource();
 
+            // Accumulate the streamed response so we can record this turn
+            // for end-of-dialogue summarisation.
+            var assistantText = new StringBuilder();
             try {
                 await foreach (var token in LlmService.Instance.GenerateAsync(
                                    userPrompt, maxTokens, _genCts.Token)) {
                     if (npcReplyText) npcReplyText.text += token;
+                    assistantText.Append(token);
                 }
                 if (outcomeTag != null && npcReplyText)
                     npcReplyText.text += outcomeTag;
+
+                if (_inDialogue && assistantText.Length > 0) {
+                    _currentTurns.Add((raw, assistantText.ToString().Trim()));
+                }
             } catch (OperationCanceledException) {
                 // expected on EndDialogue / new prompt
             } catch (Exception e) {

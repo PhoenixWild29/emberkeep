@@ -109,11 +109,11 @@ extern "C" EK_API int ek_generate(const char* user_message, int max_tokens,
     if (!user_message || !cb)        return -1;
     if (max_tokens <= 0)             return 0;
 
-    std::unique_lock<std::mutex> lk(g_gen_mutex, std::try_to_lock);
-    if (!lk.owns_lock()) {
-        std::fprintf(stderr, "[emberkeep_native] ek_generate: another call in progress\n");
-        return -4;
-    }
+    // Serialise concurrent calls. A second caller (e.g. a background
+    // summarisation kicked off after EndDialogue) waits here until the
+    // current generation finishes rather than failing fast - that lets the
+    // C# layer fire-and-forget without coordinating mutex contention.
+    std::unique_lock<std::mutex> lk(g_gen_mutex);
     g_interrupt.store(false, std::memory_order_release);
 
     std::string prompt;

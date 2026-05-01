@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -39,6 +40,27 @@ namespace EmberKeep.AI {
         public void SetSystem(string text) {
             EnsureInitialized();
             LlamaCppBridge.ek_set_system(text ?? string.Empty);
+        }
+
+        // Single-shot generation that concatenates the full reply into a
+        // string. Used for background summarisation. Goes through the same
+        // native mutex as GenerateAsync so it serialises naturally.
+        public async Task<string> SummarizeAsync(
+            string systemPrompt, string userPrompt, int maxTokens,
+            CancellationToken ct = default) {
+
+            EnsureInitialized();
+            if (string.IsNullOrEmpty(userPrompt)) return string.Empty;
+            if (maxTokens <= 0)                  return string.Empty;
+
+            SetSystem(systemPrompt ?? string.Empty);
+
+            var sb = new StringBuilder();
+            await foreach (var tok in GenerateAsync(userPrompt, maxTokens, ct)
+                                          .ConfigureAwait(false)) {
+                sb.Append(tok);
+            }
+            return sb.ToString().Trim();
         }
 
         // Streams generated tokens. Cancellation interrupts the in-flight
