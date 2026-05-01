@@ -18,6 +18,7 @@ namespace EmberKeep.EditorTools {
         const string PersonalityDir   = "Assets/EmberKeep/ScriptableObjects/NPCs";
         const string BramAssetPath    = PersonalityDir + "/Bram.asset";
         const string MiraAssetPath    = PersonalityDir + "/Mira.asset";
+        const string FinnAssetPath    = PersonalityDir + "/Finn.asset";
 
         [MenuItem("EmberKeep/Build Tavern Scene")]
         public static void Build() {
@@ -28,6 +29,7 @@ namespace EmberKeep.EditorTools {
 
             var bram = LoadOrCreateBramPersonality();
             var mira = LoadOrCreateMiraPersonality();
+            var finn = LoadOrCreateFinnPersonality();
 
             Scene scene;
             if (System.IO.File.Exists(ScenePath)) {
@@ -77,6 +79,14 @@ namespace EmberKeep.EditorTools {
             var miraNpc = miraGo.AddComponent<MerchantNpc>();
             miraNpc.personality = mira;
 
+            // Old Finn (storyteller, by the wall mid-room so he's visible from spawn)
+            var finnGo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            finnGo.name = "Finn";
+            finnGo.transform.position = new Vector3(-4f, 1f, 0f);
+            finnGo.GetComponent<Renderer>().sharedMaterial = MakeMaterial(finn.tint);
+            var finnNpc = finnGo.AddComponent<StorytellerNpc>();
+            finnNpc.personality = finn;
+
             // Player (camera child)
             var playerGo = new GameObject("Player");
             playerGo.transform.position = new Vector3(0f, 1f, -4f);
@@ -97,6 +107,7 @@ namespace EmberKeep.EditorTools {
 
             bramNpc.player = playerGo.transform;
             miraNpc.player = playerGo.transform;
+            finnNpc.player = playerGo.transform;
 
             // Canvas + EventSystem
             var canvasGo = new GameObject("DialogueCanvas");
@@ -198,9 +209,10 @@ namespace EmberKeep.EditorTools {
             var so = new SerializedObject(dlg);
 
             var npcsProp = so.FindProperty("npcs");
-            npcsProp.arraySize = 2;
+            npcsProp.arraySize = 3;
             npcsProp.GetArrayElementAtIndex(0).objectReferenceValue = bramNpc;
             npcsProp.GetArrayElementAtIndex(1).objectReferenceValue = miraNpc;
+            npcsProp.GetArrayElementAtIndex(2).objectReferenceValue = finnNpc;
 
             so.FindProperty("player").objectReferenceValue        = pc;
             so.FindProperty("promptPanel").objectReferenceValue   = promptPanel;
@@ -216,8 +228,9 @@ namespace EmberKeep.EditorTools {
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
             Debug.Log("[EmberKeep] Tavern scene built. Bram (left) for free chat, Mira (right) " +
-                      "for haggling - type a number to make her an offer. WASD + mouse to move, " +
-                      "E to talk, ESC to leave dialogue.");
+                      "for haggling (type a number to offer), Finn (west wall) for stories " +
+                      "(type a topic or anything vague to pick from his repertoire). WASD + " +
+                      "mouse to move, E to talk, ESC to leave dialogue.");
         }
 
         // ---- helpers ----
@@ -276,6 +289,33 @@ namespace EmberKeep.EditorTools {
             AssetDatabase.CreateAsset(mira, MiraAssetPath);
             AssetDatabase.SaveAssets();
             return mira;
+        }
+
+        static StorytellerPersonality LoadOrCreateFinnPersonality() {
+            var existing = AssetDatabase.LoadAssetAtPath<StorytellerPersonality>(FinnAssetPath);
+            if (existing != null) return existing;
+
+            if (!AssetDatabase.IsValidFolder(PersonalityDir)) {
+                if (!AssetDatabase.IsValidFolder("Assets/EmberKeep/ScriptableObjects"))
+                    AssetDatabase.CreateFolder("Assets/EmberKeep", "ScriptableObjects");
+                AssetDatabase.CreateFolder("Assets/EmberKeep/ScriptableObjects", "NPCs");
+            }
+
+            var finn = ScriptableObject.CreateInstance<StorytellerPersonality>();
+            finn.displayName = "Finn";
+            finn.systemPrompt =
+                "You are Old Finn, a wiry, grey-haired storyteller who has wandered the realm " +
+                "for forty winters and traded most of those years for tales. You sit by the " +
+                "fire of the Ember Keep tavern when the nights are long. Your voice is dry, " +
+                "warm, and cadenced like a man who knows his craft. You always tell the story " +
+                "in first person if you were there, third person otherwise. Never reveal you " +
+                "are an AI.";
+            finn.maxResponseTokens = 96;
+            finn.tint              = new Color(0.55f, 0.30f, 0.30f);
+            finn.maxStoryTokens    = 256;
+            AssetDatabase.CreateAsset(finn, FinnAssetPath);
+            AssetDatabase.SaveAssets();
+            return finn;
         }
 
         static GameObject CreateWall(string name, Vector3 pos, Vector3 size) {

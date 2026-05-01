@@ -93,12 +93,15 @@ namespace EmberKeep.Game {
 
             if (npcNameText) npcNameText.text = npc.DisplayName;
 
-            // Greeting line: merchants get their formatted scaffolded line so
-            // the player immediately knows what's on sale; everyone else gets
-            // an empty reply box and the LLM kicks in on first message.
+            // Greeting line: merchants and storytellers get their formatted
+            // scaffolded line so the player immediately knows what to expect;
+            // everyone else gets an empty reply box and the LLM kicks in on
+            // first message.
             if (npcReplyText) {
                 if (npc is MerchantNpc m && m.MerchantPersonality != null) {
                     npcReplyText.text = m.MerchantPersonality.FormatGreeting();
+                } else if (npc is StorytellerNpc f && f.StorytellerPersonality != null) {
+                    npcReplyText.text = f.StorytellerPersonality.FormatGreeting();
                 } else {
                     npcReplyText.text = "";
                 }
@@ -135,12 +138,14 @@ namespace EmberKeep.Game {
             if (sendButton) sendButton.interactable = false;
             if (npcReplyText) npcReplyText.text = "";
 
-            // Decide whether this turn goes through the merchant haggling path
-            // (BT decides intent, LLM generates the line) or the plain chat
-            // path (LLM responds to free-form user text).
+            // Decide which generation path this turn uses:
+            //   - merchant + numeric input -> BT picks intent, LLM writes line
+            //   - storyteller -> any input becomes a story prompt
+            //   - else -> plain chat in the NPC's persona
             string systemPrompt;
             string userPrompt;
             string outcomeTag = null;
+            int maxTokens = _currentNpc.personality?.maxResponseTokens ?? 96;
 
             if (_currentNpc is MerchantNpc merchant && TryParseOffer(raw, out int offer)) {
                 var d = merchant.EvaluateOffer(offer);
@@ -148,6 +153,12 @@ namespace EmberKeep.Game {
                 userPrompt   = $"The traveler offers {offer} gold for the " +
                                $"{merchant.MerchantPersonality.itemName}.";
                 outcomeTag = $"  [intent={d.intent}, mood {d.moodBefore:+0.00;-0.00; 0.00}->{d.moodAfter:+0.00;-0.00; 0.00}]";
+            } else if (_currentNpc is StorytellerNpc storyteller && storyteller.StorytellerPersonality != null) {
+                string topic = storyteller.PickStoryTopic(raw);
+                systemPrompt = BuildStorytellerSystemPrompt(storyteller.StorytellerPersonality, topic);
+                userPrompt   = "Tell me that story now.";
+                maxTokens    = storyteller.StorytellerPersonality.maxStoryTokens;
+                outcomeTag   = $"  [topic: {Truncate(topic, 60)}]";
             } else {
                 systemPrompt = _currentNpc.personality.systemPrompt;
                 userPrompt   = raw;
@@ -157,7 +168,6 @@ namespace EmberKeep.Game {
 
             _genCts?.Cancel();
             _genCts = new CancellationTokenSource();
-            int maxTokens = _currentNpc.personality?.maxResponseTokens ?? 96;
 
             try {
                 await foreach (var token in LlmService.Instance.GenerateAsync(
@@ -195,6 +205,19 @@ namespace EmberKeep.Game {
                 gold > 0 && gold < 100000) return true;
             gold = 0;
             return false;
+        }
+
+        static string BuildStorytellerSystemPrompt(StorytellerPersonality p, string topic) {
+            return p.systemPrompt +
+                   "\n\nThe traveler has just settled in to listen. Tell a brief but vivid " +
+                   "tavern tale (2-3 short paragraphs, no more) about: " + topic + ". " +
+                   "Use sensory detail - cold, fire, sound, smell - and end the story firmly " +
+                   "so the listener knows it's done.";
+        }
+
+        static string Truncate(string s, int max) {
+            if (string.IsNullOrEmpty(s) || s.Length <= max) return s;
+            return s.Substring(0, max - 1) + "…";
         }
 
         static string BuildMerchantSystemPrompt(MerchantPersonality p,
