@@ -22,6 +22,7 @@ namespace EmberKeep.AI {
         Task _activeGeneration;
 
         public bool IsInitialized => _initialized;
+        public bool IsBusy => _activeGeneration != null && !_activeGeneration.IsCompleted;
 
         public Task InitializeAsync(string modelPath) {
             return Task.Run(() => {

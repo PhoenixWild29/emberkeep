@@ -225,6 +225,13 @@ namespace EmberKeep.EditorTools {
             so.ApplyModifiedPropertiesWithoutUndo();
 
             EditorUtility.SetDirty(dlg);
+
+            // FPS / LLM-busy overlay HUD - top-right corner. The whole point
+            // of the worker-thread architecture is that this stays at ~60fps
+            // while the LLM is busy.
+            var hud = new GameObject("FpsOverlay");
+            hud.AddComponent<FpsOverlay>();
+
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
             Debug.Log("[EmberKeep] Tavern scene built. Bram (left) for free chat, Mira (right) " +

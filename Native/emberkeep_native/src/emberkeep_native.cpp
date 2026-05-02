@@ -25,8 +25,14 @@ namespace {
     int pick_threads() {
         unsigned hw = std::thread::hardware_concurrency();
         if (hw == 0) hw = 4;
-        int n = (int)(hw / 2);
-        if (n < 1) n = 1;
+        // Leave headroom for Unity main + render + OS. Cap at 6 because
+        // llama.cpp on Q4 quantised models is memory-bandwidth-bound past
+        // ~4-6 threads, so more threads just steal cores from the engine
+        // for diminishing returns. Tuned with the FPS overlay - the goal
+        // is steady 60+ fps in Unity while inference is running.
+        int n = (int)hw / 2 - 1;
+        if (n < 2) n = 2;
+        if (n > 6) n = 6;
         return n;
     }
 
