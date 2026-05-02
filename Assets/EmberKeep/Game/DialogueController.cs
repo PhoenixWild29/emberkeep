@@ -270,11 +270,24 @@ namespace EmberKeep.Game {
             // Accumulate the streamed response so we can record this turn
             // for end-of-dialogue summarisation.
             var assistantText = new StringBuilder();
+            int tokenCount = 0;
+            long firstTokenAtMs = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try {
                 await foreach (var token in LlmService.Instance.GenerateAsync(
                                    userPrompt, maxTokens, _genCts.Token)) {
                     if (npcReplyText) npcReplyText.text += token;
                     assistantText.Append(token);
+                    if (tokenCount == 0) firstTokenAtMs = sw.ElapsedMilliseconds;
+                    tokenCount++;
+                }
+                sw.Stop();
+                if (tokenCount > 0) {
+                    long totalMs = sw.ElapsedMilliseconds;
+                    double tps = tokenCount / (totalMs / 1000.0);
+                    Debug.Log(
+                        $"[Perf] {_currentNpc.DisplayName}: {tokenCount} tokens in {totalMs} ms " +
+                        $"(TTFT {firstTokenAtMs} ms, {tps:F1} tok/s)");
                 }
                 // ---- Safety stage 2: output scan ----
                 string finalText = assistantText.ToString();

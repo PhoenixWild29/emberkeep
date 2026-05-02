@@ -52,19 +52,34 @@ The codebase demonstrates the production-hard parts of shipping GenAI in real ga
 
 ## Performance
 
-Benchmarks pending — will be measured on the development machine and published after MVP completes. See [Roadmap](#roadmap).
+Measured on a development machine running Llama-3.2-3B-Instruct (Q4_K_M, ~2.0 GB on disk) on CPU only, with the worker-thread architecture handing tokens to Unity's main thread one at a time.
 
 | Metric | Value | Hardware |
 |---|---|---|
 | Model | Llama-3.2-3B-Instruct, Q4_K_M | — |
 | On-disk size | ~2.0 GB | — |
-| Resident memory | _Pending measurement_ | Windows x64 |
-| Time-to-first-token | _Pending measurement_ | Windows x64 (CPU) |
-| Tokens / second | _Pending measurement_ | Windows x64 (CPU) |
-| Frame rate during inference | _Target: steady 60 FPS_ | Windows x64 |
-| Per-frame inference budget | 8ms (target) | — |
+| Backend | llama.cpp `b8996`, AVX2 + FMA + F16C, 6 threads | — |
+| Tokens / second (story stream) | **9.0 tok/s** | Intel Core Ultra 7 155H (16 cores), 32 GB |
+| Time-to-first-token (cold) | 5858 ms | Intel Core Ultra 7 155H |
+| **FPS during inference (LLM busy)** | **71 FPS** (14.1 ms/frame) | Intel Core Ultra 7 155H |
+| FPS at rest | 243 FPS (4.1 ms/frame) | Intel Core Ultra 7 155H |
+| 60 FPS target budget | 16.67 ms/frame | — |
+| Per-frame inference budget | 8 ms (HUD-documented) | — |
+| Profiler main-thread time during inference | 7.57 ms | Intel Core Ultra 7 155H |
 
-Profiler screenshots will land in [`docs/perf/`](docs/perf/) once captured on Day 6.
+The headline result: **the render loop sustains 71 FPS while the LLM is fully saturating its 6 worker-thread cores** — well above the 60 FPS target. The Unity Profiler shows main-thread frame time at 7.57 ms during active generation, less than half the 16.67 ms 60-FPS budget.
+
+### FPS overlay — inference vs. idle
+
+| LLM busy (Finn streaming a story) | LLM idle (story finished) |
+|---|---|
+| ![FPS during inference](docs/perf/hud_during_story.png) | ![FPS at idle](docs/perf/hud_idle.png) |
+
+### Unity Profiler — main thread during inference
+
+![Profiler during a Finn story](docs/perf/profiler_during_story.png)
+
+The full measurement log, raw screenshots, and capture instructions live in [`docs/perf/`](docs/perf/).
 
 ## How it maps to shipping a real game
 
