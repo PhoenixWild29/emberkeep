@@ -2,7 +2,7 @@
 
 > A Unity 6 tech demo where every NPC runs a quantized 3B-parameter LLM locally on the player's machine, holds persistent memory across sessions, and stays within a strict per-frame inference budget so the game maintains a steady 60 FPS.
 
-**Status:** In active development — Day 1 of a 7-day MVP. See [Roadmap](#roadmap).
+**Status:** feature-complete tech demonstrator. Three NPC patterns, editor tooling, telemetry, Live Ops config, and measured-on-hardware performance numbers all shipping in this repo.
 
 ---
 
@@ -137,20 +137,7 @@ emberkeep/
 See [`Native/README.md`](Native/README.md) for native plugin build instructions.
 See [`Models/README.md`](Models/README.md) for fetching the Llama-3.2-3B Q4_K_M weights.
 
-The full build spec — scope rules, architecture rationale, day-by-day schedule, honesty rules — is in [`EmberKeep_Project_Spec.md`](EmberKeep_Project_Spec.md).
-
-## Roadmap
-
-- [x] Day 1 — Native plugin scaffolding + Unity C# bridge (stub)
-- [ ] Day 2 — Real llama.cpp integration, first real LLM token in Unity
-- [ ] Day 3 — Tavern scene + Bram conversation loop
-- [ ] Day 4 — Mira behavior tree + BT→LLM intent wiring
-- [ ] Day 5 — Old Finn streaming + persistent memory + safety filter
-- [ ] Day 6 — "Generate NPC" editor tool + Profiler captures
-- [ ] Day 7 — Demo video + technical blog post
-- [ ] Stretch — Speculative decoding (Llama-3.2-1B drafts, 3B verifies)
-- [ ] Stretch — Local TTS via Piper
-- [ ] Stretch — macOS / Linux native plugin builds
+The full build spec — scope rules, architecture rationale, honesty rules — is in [`EmberKeep_Project_Spec.md`](EmberKeep_Project_Spec.md).
 
 ## License
 
