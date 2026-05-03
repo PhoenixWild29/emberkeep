@@ -130,3 +130,6 @@ desktop.ini
 # Profiler captures that aren't curated for docs/perf/
 /profiler-captures/
 
+
+# Personal-only - never push
+docs/lessons_learned.md
