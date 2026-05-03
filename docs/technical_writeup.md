@@ -6,16 +6,7 @@ The interesting question is not "can we wire an LLM to a game" — that is a wee
 
 ## The architecture in one diagram
 
-```
-Unity Main Thread (C#)                Worker Thread (Task.Run)              Native Plugin (C++)
-  DialogueController  ──SetSystem──▶  LlamaCppBridge  ──ek_set_system──▶   emberkeep_native.dll
-        │                              (P/Invoke)                                │
-   GenerateAsync                                                                 │
-        │                                                                       ▼
-        ▼                          token cb (UTF-8 ptr)                     llama.cpp
-  IAsyncEnumerable<string> ◀── SPSC queue ◀── enqueue(tok) ◀── ek_generate ◀── Llama 3.2 3B Q4_K_M
-   (await foreach)         ConcurrentQueue<string> + SemaphoreSlim                 (n_ctx=4096)
-```
+![EmberKeep runtime architecture](architecture.png)
 
 Three threads. Unity's main thread owns rendering, input, the BT tick, the dialogue Canvas, and the singleton `LlmService` (`Assets/EmberKeep/AI/LlmService.cs`). When a turn fires, `LlmService.GenerateAsync` schedules `ek_generate` on a `Task.Run` worker; the native plugin produces tokens on its own ggml thread pool and pushes each one through a P/Invoke callback into an SPSC queue (`AsyncTokenQueue` at `LlmService.cs:141`, a `ConcurrentQueue<string>` plus `SemaphoreSlim`). The main thread `await foreach`-es the queue into UI text. KV-cache state is reset per turn with `llama_memory_clear` and the system prompt is re-applied from each NPC's personality plus their rolling memory block — cheap per-NPC scoping without juggling concurrent contexts.
 

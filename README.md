@@ -23,32 +23,11 @@ The codebase demonstrates the production-hard parts of shipping GenAI in real ga
 
 ## Architecture
 
-```
-+-----------------------------------------------------------+
-|                     Unity Main Thread                     |
-|                                                           |
-|   NPC GameObject  <-->  Dialogue UI    Behavior Tree      |
-|         |                                  |              |
-|         +---->   LlmService (C#)     <-----+              |
-|                  - Prompt builder                         |
-|                  - Token queue poller                     |
-|                  - Memory store (JSON)                    |
-+-----------------------|-----------------------------------+
-                        |  Lock-free SPSC queue
-                        |  (tokens up, prompts down)
-+-----------------------|-----------------------------------+
-|                       v       Inference Worker Thread     |
-|         LlamaCppBridge (C#)  -->  emberkeep_native.dll    |
-|                                   - llama.cpp wrapper     |
-|                                   - KV-cache mgmt         |
-|                                   - Per-NPC sessions      |
-|                                          |                |
-|                                          v                |
-|                              Llama-3.2-3B Q4_K_M (~2.0GB) |
-+-----------------------------------------------------------+
-```
+![EmberKeep runtime architecture](docs/architecture.png)
 
-**Why this design:** the main thread never blocks on inference. Tokens are produced on a worker thread and dequeued at most once per frame, capped at a per-frame budget (target 8ms = half of a 60 FPS frame). The result is that generation feels real-time to the player, but the render loop never starves.
+**Why this design:** the main thread never blocks on inference. Tokens are produced on a worker thread and dequeued at most once per frame, capped at an 8 ms per-frame budget so the render loop never starves. The hot path (orange) is the per-token critical path; non-realtime I/O (purple, dashed) is model load, persistent memory read/write at session boundaries, and FPS HUD observation. Per-NPC KV-cache lives in the C++ plugin so the player can switch NPCs without re-prefilling context — only caches are per-NPC, the model is shared.
+
+The mermaid source for this diagram (component view + Bram-turn sequence diagram) lives at [`docs/architecture.md`](docs/architecture.md), so it stays auditable and re-renderable.
 
 ## Performance
 
