@@ -255,6 +255,31 @@ sequenceDiagram
 
 ---
 
+## Live Ops + Telemetry layer
+
+A separate, optional layer of the architecture handles instrumentation and
+runtime configuration without touching the core dialogue path:
+
+- **`LiveOpsConfig`** (`Assets/EmberKeep/AI/LiveOpsConfig.cs`) — JSON-driven
+  runtime config at `<persistentDataPath>/liveops.json`. Fields:
+  `safety_filter_enabled`, `telemetry_enabled`, `memory_enabled`,
+  `max_response_tokens_override`, `max_story_tokens_override`,
+  `per_frame_budget_ms`, `ab_variant`. Reloaded at the start of every
+  dialogue so designers can edit the file mid-session and see changes on
+  the next turn — no rebuild. Wire-compatible with a remote URL fetch as
+  a one-line change.
+- **`Telemetry`** (`Assets/EmberKeep/AI/Telemetry.cs`) — local-first event
+  emitter. Background-thread JSONL writer at
+  `<persistentDataPath>/telemetry/YYYY-MM-DD.jsonl`. Event schema is
+  wire-compatible with Mixpanel / Amplitude / GameAnalytics, so the only
+  step needed to ship to a backend is to swap the file writer for an
+  HttpClient call. Currently emits `dialogue_started`, `dialogue_ended`,
+  `llm_turn_completed`, `safety_blocked`, `npc_generated`.
+- **Telemetry Dashboard** (`EmberKeep > Telemetry Dashboard` editor menu)
+  — pulls the JSONL files, aggregates per-NPC turn counts, average
+  duration, average tok/s, safety hits by reason. Same numbers a
+  Mixpanel funnel would show on a real backend.
+
 ## Why this design
 
 The main thread never blocks on inference. Tokens are produced on a worker

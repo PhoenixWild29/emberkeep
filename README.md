@@ -81,6 +81,17 @@ The headline result: **the render loop sustains 71 FPS while the LLM is fully sa
 
 The full measurement log, raw screenshots, and capture instructions live in [`docs/perf/`](docs/perf/).
 
+## Live Ops + Telemetry
+
+A separate layer of the architecture handles instrumentation and runtime configuration without touching the core dialogue path:
+
+- **`LiveOpsConfig`** — JSON-driven runtime config at `<persistentDataPath>/liveops.json`. Hot-reloaded at the start of every dialogue so a designer can flip `safety_filter_enabled`, `memory_enabled`, `max_response_tokens_override`, `max_story_tokens_override`, `per_frame_budget_ms`, or `ab_variant` mid-session without rebuilding the player.
+- **`Telemetry`** — local-first event emitter with a background-thread JSONL writer at `<persistentDataPath>/telemetry/YYYY-MM-DD.jsonl`. Schema is wire-compatible with Mixpanel / Amplitude / GameAnalytics; swapping the file writer for an HttpClient POST is a one-line change.
+- **Telemetry Dashboard** (`EmberKeep → Telemetry Dashboard` editor menu) — aggregates events into headline counts, per-NPC turn breakdowns, average tokens / sec, and safety blocks by reason.
+
+Full schema and a representative log slice are documented in [`docs/telemetry_schema.md`](docs/telemetry_schema.md) and [`docs/perf/sample_telemetry.jsonl`](docs/perf/sample_telemetry.jsonl). The pipeline is intentionally local-first: nothing leaves the device by default, but the schema and writer are structured so a production deployment swaps to a backend without touching call sites.
+
+
 ## How it maps to shipping a real game
 
 | Production Concern | How EmberKeep Addresses It |
@@ -91,8 +102,9 @@ The full measurement log, raw screenshots, and capture instructions live in [`do
 | Perceived latency | Streaming token rendering, typewriter UI |
 | Character consistency | System-prompt grounding + summarized memory injection |
 | Safety / refusal | Pre-generation prompt filter + post-generation content filter |
-| Live Ops iteration | NPC personalities are ScriptableObjects — designers edit without code changes |
-| No PII leaves device | Fully on-device; no network calls during gameplay |
+| Live Ops iteration | NPC personalities are ScriptableObjects — designers edit without code changes; runtime config in `liveops.json` hot-reloads on the next dialogue |
+| Production observability | Local-first telemetry pipeline (Mixpanel-compatible JSONL schema) + designer-facing aggregation dashboard — see [`docs/telemetry_schema.md`](docs/telemetry_schema.md) |
+| No PII leaves device | Fully on-device; no network calls during gameplay; telemetry is local-first by default |
 
 ## Project structure
 

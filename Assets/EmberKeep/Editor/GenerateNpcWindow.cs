@@ -244,6 +244,7 @@ namespace EmberKeep.EditorTools {
             AssetDatabase.Refresh();
             EditorGUIUtility.PingObject(so);
             Selection.activeObject = so;
+            Telemetry.NpcGenerated(_concept, _type.ToString(), data.displayName);
             _statusMessage = $"Saved {path}. Open BuildTavernScene to spawn this NPC, or assign it manually.";
         }
 

@@ -34,6 +34,8 @@ namespace EmberKeep.Game {
         Npc _currentNpc;
         Npc _candidate;
         CancellationTokenSource _genCts;
+        long _dialogueStartedMs;
+        readonly System.Diagnostics.Stopwatch _sessionClock = System.Diagnostics.Stopwatch.StartNew();
 
         // Day 5-B memory state, scoped to the active conversation:
         //   _memoryBlock      : "Past visits..." snippet appended to every system prompt this turn
@@ -93,10 +95,19 @@ namespace EmberKeep.Game {
         }
 
         void StartDialogue(Npc npc) {
+            // Pull the latest live-ops config so any edits made between
+            // dialogues take effect on this turn.
+            LiveOpsConfig.Reload();
+
             _inDialogue = true;
             _currentNpc = npc;
             _currentTurns.Clear();
-            _memoryBlock = NpcMemoryStore.FormatForSystemPrompt(MemoryIdFor(npc));
+            _memoryBlock = LiveOpsConfig.Current.memory_enabled
+                ? NpcMemoryStore.FormatForSystemPrompt(MemoryIdFor(npc))
+                : "";
+            _dialogueStartedMs = _sessionClock.ElapsedMilliseconds;
+            int memCount = CountMemorySummaries(npc);
+            Telemetry.DialogueStarted(MemoryIdFor(npc), memCount);
             if (player) player.SetInputEnabled(false);
             if (promptPanel)   promptPanel.SetActive(false);
             if (dialoguePanel) dialoguePanel.SetActive(true);
@@ -140,6 +151,7 @@ namespace EmberKeep.Game {
             // a fresh dialogue.
             var npcSnapshot   = _currentNpc;
             var turnsSnapshot = new List<(string, string)>(_currentTurns);
+            long durationMs   = _sessionClock.ElapsedMilliseconds - _dialogueStartedMs;
 
             _inDialogue = false;
             _currentNpc = null;
@@ -147,12 +159,23 @@ namespace EmberKeep.Game {
             if (dialoguePanel) dialoguePanel.SetActive(false);
             if (player) player.SetInputEnabled(true);
 
+            if (npcSnapshot != null) {
+                Telemetry.DialogueEnded(MemoryIdFor(npcSnapshot), turnsSnapshot.Count, durationMs);
+            }
+
             // Fire and forget summarisation. The native side serialises with
             // any subsequent ek_generate so a player walking to another NPC
-            // and pressing E will simply wait at most a few seconds.
-            if (npcSnapshot != null && npcSnapshot.personality != null && turnsSnapshot.Count > 0) {
+            // and pressing E will simply wait at most a few seconds. Skipped
+            // entirely when memory is disabled via Live Ops config.
+            bool memOn = LiveOpsConfig.Current.memory_enabled;
+            if (memOn && npcSnapshot != null && npcSnapshot.personality != null && turnsSnapshot.Count > 0) {
                 _ = SummarizeAndStoreAsync(npcSnapshot, turnsSnapshot);
             }
+        }
+
+        static int CountMemorySummaries(Npc npc) {
+            try { return NpcMemoryStore.Load(MemoryIdFor(npc)).Count; }
+            catch { return 0; }
         }
 
         async Task SummarizeAndStoreAsync(Npc npc, List<(string user, string assistant)> turns) {
@@ -227,13 +250,19 @@ namespace EmberKeep.Game {
             if (npcReplyText) npcReplyText.text = "";
 
             // ---- Safety stage 1: input scan (before LLM call) ----
-            var blockReason = SafetyFilter.IsPromptBlocked(raw);
-            if (blockReason != SafetyFilter.BlockReason.None) {
-                string refusal = ResolveRefusal(_currentNpc);
-                if (npcReplyText) npcReplyText.text = refusal;
-                Debug.Log($"[Safety] blocked input ({blockReason}): {raw}");
-                if (_inDialogue) ReenableInput();
-                return;
+            // Respects the live-ops kill switch so a runtime can disable
+            // filtering without rebuilding the player.
+            if (LiveOpsConfig.Current.safety_filter_enabled) {
+                var blockReason = SafetyFilter.IsPromptBlocked(raw);
+                if (blockReason != SafetyFilter.BlockReason.None) {
+                    string refusal = ResolveRefusal(_currentNpc);
+                    if (npcReplyText) npcReplyText.text = refusal;
+                    Debug.Log($"[Safety] blocked input ({blockReason}): {raw}");
+                    Telemetry.SafetyBlocked(
+                        MemoryIdFor(_currentNpc), "input", blockReason.ToString(), raw);
+                    if (_inDialogue) ReenableInput();
+                    return;
+                }
             }
 
             // Decide which generation path this turn uses:
@@ -243,7 +272,10 @@ namespace EmberKeep.Game {
             string systemPrompt;
             string userPrompt;
             string outcomeTag = null;
-            int maxTokens = _currentNpc.personality?.maxResponseTokens ?? 96;
+            string telemetryIntent = "";
+            string telemetryTopic  = "";
+            int maxTokens = LiveOpsConfig.ResolveMaxResponseTokens(
+                _currentNpc.personality?.maxResponseTokens ?? 96);
 
             if (_currentNpc is MerchantNpc merchant && TryParseOffer(raw, out int offer)) {
                 var d = merchant.EvaluateOffer(offer);
@@ -251,12 +283,15 @@ namespace EmberKeep.Game {
                 userPrompt   = $"The traveler offers {offer} gold for the " +
                                $"{merchant.MerchantPersonality.itemName}.";
                 outcomeTag = $"  [intent={d.intent}, mood {d.moodBefore:+0.00;-0.00; 0.00}->{d.moodAfter:+0.00;-0.00; 0.00}]";
+                telemetryIntent = d.intent.ToString();
             } else if (_currentNpc is StorytellerNpc storyteller && storyteller.StorytellerPersonality != null) {
                 string topic = storyteller.PickStoryTopic(raw);
                 systemPrompt = BuildStorytellerSystemPrompt(storyteller.StorytellerPersonality, topic);
                 userPrompt   = "Tell me that story now.";
-                maxTokens    = storyteller.StorytellerPersonality.maxStoryTokens;
+                maxTokens    = LiveOpsConfig.ResolveMaxStoryTokens(
+                    storyteller.StorytellerPersonality.maxStoryTokens);
                 outcomeTag   = $"  [topic: {Truncate(topic, 60)}]";
+                telemetryTopic = topic;
             } else {
                 systemPrompt = _currentNpc.personality.systemPrompt;
                 userPrompt   = raw;
@@ -282,17 +317,23 @@ namespace EmberKeep.Game {
                     tokenCount++;
                 }
                 sw.Stop();
+                long totalMs = sw.ElapsedMilliseconds;
                 if (tokenCount > 0) {
-                    long totalMs = sw.ElapsedMilliseconds;
                     double tps = tokenCount / (totalMs / 1000.0);
                     Debug.Log(
                         $"[Perf] {_currentNpc.DisplayName}: {tokenCount} tokens in {totalMs} ms " +
                         $"(TTFT {firstTokenAtMs} ms, {tps:F1} tok/s)");
+                    Telemetry.LlmTurnCompleted(
+                        MemoryIdFor(_currentNpc), tokenCount, totalMs, firstTokenAtMs,
+                        telemetryIntent, telemetryTopic);
                 }
                 // ---- Safety stage 2: output scan ----
                 string finalText = assistantText.ToString();
-                if (SafetyFilter.ContainsBlockedContent(finalText)) {
+                if (LiveOpsConfig.Current.safety_filter_enabled &&
+                    SafetyFilter.ContainsBlockedContent(finalText)) {
                     Debug.LogWarning($"[Safety] blocked output for {MemoryIdFor(_currentNpc)}; replacing with refusal line.");
+                    Telemetry.SafetyBlocked(
+                        MemoryIdFor(_currentNpc), "output", "BlockedKeyword", finalText);
                     finalText = ResolveRefusal(_currentNpc);
                     if (npcReplyText) npcReplyText.text = finalText;
                 } else if (outcomeTag != null && npcReplyText) {
